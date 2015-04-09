@@ -1,0 +1,279 @@
+# Severe Weather Events - USA 1950 - 2011 
+
+## Synopsis
+
+This report explores the NOAA Storm Database and answer some basic questions about severe weather events. The study analyzes  which types of events across the United States are most harmful with respect to population health. 
+
+## Data Processing
+
+The data is obtained from the NOAA Storm Database which consists of 902,297 records that capture severe whether events starting in the year 1950 until November 2011. The data can be obtained [here]("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"). Documentation can be obtained form the [National Weather Service Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) and from the [National Climatic Data Center Storm Events FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf).
+
+1. Data download
+- The link to the database is 
+```{r data_in}
+data.url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+
+```
+- The download file contains a comma-separated-value file compressed via the bzip2 algorithm called "repdata-data-StormData.csv".  
+
+```{r data_file}
+data.file <- "repdata-data-StormData.csv"
+
+```
+- We will use auxiliary functions to simplify downloading of the file and extracting the data.
+
+```{r aux.dnld.xtrct, warning = FALSE, message=FALSE, results='hide'}
+require("plyr")
+require("ggplot2")
+dnldfile <- function(fileURL, fname) {  ## Function to download the zip 
+  if(!file.exists(fname)) {             # file if not already there
+    download.file(fileURL, destfile=fname) 
+    }
+  }
+# Generic function to unzip and extract .zip files:
+getZFile <- function(fzip,fname) {
+  if (!file.exists(fzip)) {dnldfile(fzip,fname)}
+  unzip(fname)  
+  }
+# Generic function to unzip and extract .zip files:
+getbZFile <- function(fzip,fname) {
+  if (!file.exists(fzip)) {dnldfile(fzip,fname)}
+  bzfile(fname)  
+  }
+
+```
+- Download and extract the data. The data will be in a data frame called `dta`.
+```{r dnld.xtract, warning = FALSE, message=FALSE, results='hide'}
+getbZFile(data.url,data.file)
+```
+
+```{r read_data, cache = TRUE, warning = FALSE}
+
+dta <- read.csv(data.file)
+
+```
+2.  Include only columns of interest
+
+As we will be interested only types of events (as indicated in the EVTYPE variable) that are most harmful with respect to population health abd the ones that have the greatest economic consequences, we will only keep the variables that collect that information.  These include:
+
+- BGN_DATE    date of the event
+- STATE       state where the event occurred
+- EVTYPE      event type (e.g. tornado, flood, etc.)
+- FATALITIES  measure of harm to human health
+- INJURIES    measure of harm to human health
+- PROPDMG     measure of property damage and hence economic damage in USD
+- PROPDMGEXP  A multiplier with a unit value or a letter indicating 
+Hundredth (H), Thousand (D), Million (M), Billion (B) (e.g. thousands, millions USD, etc.)
+- CROPDMG     measure of crop damage and hence economic damage in USD
+- CROPDMGEXP  A multiplier with a unit value or a letter indicating 
+Hundredth (H), Thousand (D), Million (M), Billion (B) (e.g. thousands, millions USD, etc.)
+
+- The working data frame will be `dtw`.
+
+```{r KEEP_VARS, warning = FALSE}
+
+dtw <- dta[,c("BGN_DATE", "STATE", "EVTYPE", 
+              "FATALITIES", "INJURIES", 
+              "PROPDMG", "PROPDMGEXP", 
+              "CROPDMG", "CROPDMGEXP")]
+
+```
+
+- We will convert the BGN_DATE variable to a POSIX date
+
+```{r cvt_BGN_DATE}
+
+dtw$BGN_DATE <- strptime(dtw$BGN_DATE, "%m/%d/%Y %H:%M:%S")  ## Convert date to POSIXlt object 
+
+```
+3. Data transformations: Economic impact variables
+
+The economic impact variables for property and crop damage have their information separated into two columns: one column contains a numeric value [...]DMG and the other a unit designation [...]DMGEXP.  The unit designations is  assumed to be as follows:  
+
+    "H" or "h"  hundredths of dollars  
+    "K"?? or "k"  thousands of dollars  
+    "M" or "m"  millions of dollars  
+    "B"         billions of dollars  
+    "1"         as exponent, 10^1 units of dollars  
+    "?"2”         as exponent, 10^2 hundreds of dollars   
+    "3"         as exponent, 10^3 thousands of dollars  
+    ...         ...
+    "8"         as exponent, 10^8 100,000,000 dollars  
+    "?"         undefined  
+    "-"         undefined  
+    "-"         undefined  
+
+These unit designations will be replaced with their respective numeric equivalents, or 1 if the symbol is undefined. In addition, we will replace missing data with the actual number '0'.
+
+- Replace the missing data with '0'
+```{r tidy_DAT}
+
+dtw$FATALITIES[(dtw$FATALITIES == "")] <- 0
+dtw$INJURIES[(dtw$INJURIES == "")] <- 0
+dtw$PROPDMG[(dtw$PROPDMG == "")] <- 0
+dtw$CROPDMG[(dtw$CROPDMG == "")] <- 0
+dtw$PROPDMGEXP[(dtw$PROPDMGEXP == "")] <- 0
+dtw$CROPDMGEXP[(dtw$CROPDMGEXP == "")] <- 0
+
+```
+- Convert the data stored in [...]EXP to character so it can be replaced.
+
+```{r cvt_DTW}
+
+dtw$PROPDMG <- as.character(dtw$PROPDMG)
+dtw$CROPDMG <- as.character(dtw$CROPDMG)
+
+dtw$PROPDMGEXP <- as.character(dtw$PROPDMGEXP)
+dtw$CROPDMGEXP <- as.character(dtw$CROPDMGEXP)
+
+
+```
+
+- Replace the symbols and numbers with an uniform number scheme
+
+```{r rep_EXPs}
+
+dtw$PROPDMGEXP[(dtw$PROPDMGEXP == "-") | (dtw$PROPDMGEXP == "+") | (dtw$PROPDMGEXP == "?")] <- 1
+dtw$CROPDMGEXP[(dtw$CROPDMGEXP == "-") | (dtw$CROPDMGEXP == "+") | (dtw$CROPDMGEXP == "?")] <- 1
+
+dtw$PROPDMGEXP[toupper(dtw$PROPDMGEXP) == "H"] <- 2
+dtw$CROPDMGEXP[toupper(dtw$CROPDMGEXP) == "H"] <- 2
+
+dtw$PROPDMGEXP[toupper(dtw$PROPDMGEXP) == "K"] <- 3
+dtw$CROPDMGEXP[toupper(dtw$CROPDMGEXP) == "K"] <- 3
+
+dtw$PROPDMGEXP[toupper(dtw$PROPDMGEXP) == "M"] <- 6
+dtw$CROPDMGEXP[toupper(dtw$CROPDMGEXP) == "M"] <- 6
+
+dtw$PROPDMGEXP[toupper(dtw$PROPDMGEXP) == "B"] <- 9
+dtw$CROPDMGEXP[toupper(dtw$CROPDMGEXP) == "B"] <- 9
+
+```
+- Convert [...]DMG and [...]DMGEXP back to number variables.
+
+```{r cvt_to_nums}
+
+dtw$PROPDMG <- as.numeric(dtw$PROPDMG)
+dtw$PROPDMGEXP <- as.numeric(dtw$PROPDMGEXP)
+
+dtw$CROPDMG <- as.numeric(dtw$CROPDMG)
+dtw$CROPDMGEXP <- as.numeric(dtw$CROPDMGEXP)
+
+```
+
+- Determine the actual loss by creating a new variable [...]DMGTOT obtained 
+by raising the number in [...]DMG to the exponent in [...]DMGEXP 
+
+```{r calc_loss}
+
+dtw$PROPDMGTOT <- dtw$PROPDMG^dtw$PROPDMGEXP
+dtw$CROPDMGTOT <- dtw$CROPDMG^dtw$CROPDMGEXP
+
+```
+
+- Determine the total loss by creating a new variable DMGTOT obtained 
+by adding the crop and propertty lossess (CROPDMGTOTAL + PROPDMGTOTAL)
+
+```{r calc_tot_loss}
+
+dtw$DMGTOT <- dtw$PROPDMGTOT + dtw$CROPDMGTOT
+
+```
+4. Obtain aggregates of total economic loss damage (DMGTOT), fatalities (FATALITIES), 
+and injuries (INJURIES) by type of event (EVTYPE).  
+- Use the the tapply function to add (sum) all the values of the first variable by the evnt type variable.
+- In order to obtain the events that have the most significant impact, the data is sorted in descending order.  
+
+```{r aggregate_dta}
+
+dtw.f <- sort(tapply(dtw$FATALITIES, dtw$EVTYPE, sum), decreasing = TRUE)
+dtw.i <- sort(tapply(dtw$INJURIES, dtw$EVTYPE, sum), decreasing = TRUE)
+dtw.t <- sort(tapply(dtw$DMGTOT, dtw$EVTYPE, sum), decreasing = TRUE)
+
+```
+
+## Results
+
+1. Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+
+#### Fatality count 1950-2011
+
+- Top 10 Event types in terms of fatalities
+
+```{r f_c}
+
+head(dtw.f,10)
+
+```
+
+#### Injury count 1950-2011
+
+- Top 10 Event types in terms of injuries
+
+```{r f_i}
+
+head(dtw.i,10)
+
+```
+
+2. Across the United States, which types of events have the greatest economic consequences?
+
+#### Property damage (USD) 1950-2011
+
+- Top 10 Event types in terms of property damage
+
+```{r f_t}
+
+head(dtw.t,10)
+
+```
+
+## Figures
+
+```{r fig_fatality}
+
+events <- as.vector(names(head(dtw.f,10)))
+y_vals <- as.vector(head(dtw.f,10))
+df <- data.frame(events, y_vals)
+
+ggplot(data = df, 
+        aes(x = df$events, y = df$y_vals)) + 
+        geom_bar(stat = "identity") + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+        xlab("Event Type") + 
+        ylab("Number of Fatalities") + 
+        ggtitle("NOAA Storm Data Base\n Ten Highest Fatality Counts, 1950-2011")
+
+````
+
+```{r fig_injury}
+
+events <- as.vector(names(head(dtw.t,10)))
+y_vals <- as.vector(head(dtw.t,10))
+df <- data.frame(events, y_vals)
+
+ggplot(data = df, 
+        aes(x = df$events, y = df$y_vals)) + 
+        geom_bar(stat = "identity") + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+        xlab("Event Type") + 
+        ylab("Number of Injuries") + 
+        ggtitle("NOAA Storm Data Base\n Ten Highest Injury Counts, 1950-2011")
+
+```
+
+```{r fig_totdmg}
+
+events <- as.vector(names(head(dtw.i,10)))
+y_vals <- as.vector(head(dtw.i,10))
+df <- data.frame(events, y_vals)
+
+ggplot(data = df, 
+        aes(x = df$events, y = df$y_vals)) + 
+        geom_bar(stat = "identity") + 
+        theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+        xlab("Event Type") + 
+        ylab("Cost in USD") + 
+        ggtitle("NOAA Storm Data Base\n Ten Highest Total Property Damage Events, 1950-2011")
+
+```
